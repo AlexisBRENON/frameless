@@ -504,6 +504,42 @@ final class RecordEncoderTests extends TypedDatasetSuite with Matchers {
 
     ds1.collect.run() shouldBe expected
   }
+
+  test("Drop useless columns when encoding") {
+    import RecordEncoderTests.RepeatedType
+    import org.apache.spark.sql.Encoder
+    implicit val encoder: Encoder[RepeatedType] = TypedExpressionEncoder[RepeatedType]
+
+    val record = RepeatedType("value1", "value2")
+    val ds = session.createDataset(Seq(record))
+      .withColumn("useless", F.lit(null))
+      .as[RepeatedType]
+
+    // Fails with:
+    // org.apache.spark.sql.AnalysisException: Try to map struct<field1:string,field2:string,useless:void> to Tuple2,
+    // but failed as the number of fields does not line up.
+    ds.head() shouldBe record
+  }
+
+  test("Properly encode partitioned data") {
+    import RecordEncoderTests.RepeatedType
+    import org.apache.spark.sql.Encoder
+    implicit val encoder: Encoder[RepeatedType] = TypedExpressionEncoder[RepeatedType]
+
+    val record = RepeatedType("value1", "value2")
+    session.createDataset(Seq(record))
+      .write
+      .partitionBy("field1")
+      .mode("overwrite")
+      .save("/tmp/frameless/test/partitionned")
+
+    val ds = session.read.load("/tmp/frameless/test/partitionned")
+      .as[RepeatedType]
+
+    // Fails with:
+    // RepeatedType(value2,value1) was not equal to RepeatedType(value1,value2)
+    ds.head() shouldBe record
+  }
 }
 
 // ---
@@ -540,4 +576,6 @@ object RecordEncoderTests {
   final class Grade(val value: BigDecimal) extends AnyVal with Serializable
 
   case class Student(name: String, grades: Map[Subject, Grade])
+
+  case class RepeatedType(field1: String, field2: String)
 }
